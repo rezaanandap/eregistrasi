@@ -117,31 +117,24 @@
 
     document.addEventListener('DOMContentLoaded', () => { initApp(); });
 
+    
     async function initApp() {
       startCamera();
-    
       try {
-        // Memanggil API getRefData dari GAS
-        const response = await fetch(`${WEB_APP_URL}?action=getRefData`);
-        const data = await response.json();
-        
-        // Simpan ke variabel global masterData agar bisa digunakan filter dropdown
-        masterData = data;
-    
-        // Ambil daftar unik Satker
-        const unikSatker = [...new Set(data.map(i => i.satker || i.asalsatker))]
-          .filter(s => s)
-          .sort();
-    
-        const selSatker = document.getElementById('asalsatker');
-        selSatker.innerHTML = '<option value="" disabled selected>Pilih Satker</option>' +
-          unikSatker.map(s => `<option value="${s}">${s}</option>`).join('');
+          // Ambil Data Referensi
+          const resRef = await fetch(`${WEB_APP_URL}?action=getRefData`);
+          masterData = await resRef.json();
           
-        console.log("Data referensi berhasil dimuat:", masterData.length, "baris.");
-      } catch (err) {
-        console.error("Gagal mengambil data referensi:", err);
-        Swal.fire('Gagal Memuat Data', 'Pastikan koneksi internet stabil dan URL Web App benar.', 'error');
-      }
+          // Ambil Template ID Card (Tambahkan ini)
+          const resTemp = await fetch(`${WEB_APP_URL}?action=getTemplate`);
+          const dataTemp = await resTemp.json();
+          templateCached = dataTemp.base64;
+  
+          // Render Dropdown Satker (Kode Anda yang sudah ada tetap di sini)
+          const unikSatker = [...new Set(masterData.map(i => i.satker || i.asalsatker))].filter(s => s).sort();
+          document.getElementById('asalsatker').innerHTML = '<option value="" disabled selected>Pilih Satker</option>' +
+              unikSatker.map(s => `<option value="${s}">${s}</option>`).join('');
+      } catch (err) { console.error(err); }
     }
 
     
@@ -248,18 +241,141 @@
         jabatans.map(j => `<option value="${j}">${j}</option>`).join('');
     }
 
-    // Fungsi Pencarian Sederhana (Client-side)
-    function doSearch() {
+    async function doSearch() {
       const key = document.getElementById('keyword').value.toLowerCase();
       const div = document.getElementById('results');
+      
       if (key.length < 3) { div.innerHTML = ""; return; }
       
-      // Filter dari masterData (jika masterData berisi semua peserta, bukan hanya ref)
-      // Catatan: getRefData Anda saat ini hanya mengambil referensi satker, 
-      // Anda mungkin perlu API terpisah (misal: getAllPeserta) untuk pencarian ini bekerja di GitHub Pages.
-      div.innerHTML = "<div class='text-sm text-gray-500'>Pencarian memerlukan API getAllPeserta...</div>";
+      try {
+          const response = await fetch(`${WEB_APP_URL}?action=getAllData`);
+          const allData = await response.json();
+          
+          const filtered = allData.filter(r => 
+              r.nama.toLowerCase().includes(key) || String(r.nik).includes(key)
+          );
+  
+          div.innerHTML = filtered.map(r => `
+              <div class="bg-white p-4 rounded-2xl shadow-sm border flex justify-between items-center mb-2">
+                  <div class="text-left">
+                      <div class="font-bold text-red-700">${r.nama}</div>
+                      <div class="text-[10px] text-gray-500">NIK: ${r.nik}</div>
+                  </div>
+                  <button onclick="reprintID('${btoa(JSON.stringify(r))}')" class="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold">
+                      <i class="fas fa-id-card"></i> Cetak
+                  </button>
+              </div>
+          `).join('');
+      } catch (e) { 
+          div.innerHTML = "<div class='text-red-500 text-xs'>Gagal memuat data...</div>";
+      }
     }
+
+    // --- FUNGSI CETAK ULANG (DIJALANKAN DARI TOMBOL SEARCH) ---
+    function reprintID(encodedData) {
+        const data = JSON.parse(atob(encodedData));
+        Swal.fire({ 
+            title: 'Menyiapkan ID Card...', 
+            allowOutsideClick: false, 
+            didOpen: () => Swal.showLoading() 
+        });
+        
+        // Ambil template secara asinkron sebelum render
+        fetch(`${WEB_APP_URL}?action=getTemplate`)
+            .then(res => res.json())
+            .then(res => {
+                templateCached = res.base64;
+                renderID(data, true); 
+            });
+    }
+
+  // --- CORE ENGINE: RENDER ID CARD ---
+    function renderID(data, isReprint = false) {
+        let canvas = document.getElementById('id-canvas');
+        const ctx = canvas.getContext('2d');
+    
+        // Generate QR Code (Hidden)
+        const qrContainer = document.createElement("div");
+        new QRCode(qrContainer, {
+            text: String(data.nik),
+            width: 200, height: 200,
+            correctLevel: QRCode.CorrectLevel.H
+        });
+    
+        const bg = new Image();
+        bg.crossOrigin = "anonymous";
+        bg.onload = function() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(bg, 0, 0, 700, 1000);
+            
+            const user = new Image();
+            user.crossOrigin = "anonymous";
+            user.onload = function() {
+                ctx.drawImage(user, 214, 440, 272, 272); 
+    
+                setTimeout(() => {
+                    const qrImg = qrContainer.querySelector('img');
+                    if(qrImg) {
+                        ctx.fillStyle = "white";
+                        ctx.fillRect(520, 820, 130, 130); 
+                        ctx.drawImage(qrImg, 530, 830, 110, 110);
+                    }
+    
+                    ctx.fillStyle = "black"; 
+                    ctx.textAlign = "center";
+                    ctx.font = "bold 34px Arial"; 
+                    ctx.fillText(data.nama.toUpperCase(), 350, 780);
+                    ctx.font = "26px Arial"; 
+                    ctx.fillText(data.instansi || "", 350, 820);
+                    ctx.font = "italic 24px Arial"; 
+                    ctx.fillText(data.jabatan || "", 350, 855);
+    
+                    const imgUrl = canvas.toDataURL("image/png");
+                    
+                    // Simpan ke Drive via API POST
+                    fetch(WEB_APP_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({
+                            action: 'saveID',
+                            base64: imgUrl,
+                            nama: data.nama,
+                            nik: data.nik
+                        })
+                    });
+    
+                    Swal.fire({
+                        title: isReprint ? 'ID Card Peserta' : 'Pendaftaran Berhasil!',
+                        imageUrl: imgUrl,
+                        imageHeight: 400,
+                        confirmButtonText: '<i class="fas fa-download"></i> Download',
+                        confirmButtonColor: '#16a34a',
+                        showCancelButton: true
+                    }).then((result) => {
+                        if (result.isConfirmed) {
+                            const a = document.createElement('a');
+                            a.href = imgUrl; 
+                            a.download = `ID_${data.nama.replace(/\s+/g, '_')}.png`; 
+                            a.click();
+                            if (!isReprint) location.reload();
+                        }
+                    });
+                }, 500);
+            };
+            // Handle Foto URL (Drive atau Base64)
+            let fotoSrc = data.foto || data.fotoURL || "";
+            if (fotoSrc.includes("drive.google.com")) {
+                const id = fotoSrc.match(/[-\w]{25,}/);
+                user.src = "https://drive.google.com/uc?export=view&id=" + id[0];
+            } else {
+                user.src = fotoSrc || "https://via.placeholder.com/272";
+            }
+        };
+        bg.src = templateCached;
+    }
+
   </script>
 </body>
 
 </html>
+
