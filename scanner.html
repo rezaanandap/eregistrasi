@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Scanner - KPU Sulawesi Barat</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-slate-900 min-h-screen flex items-center justify-center p-4">
+
+  <div class="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl overflow-hidden">
+    <div class="p-8 text-center bg-red-600 text-white">
+      <h1 class="text-2xl font-bold uppercase tracking-wider">QR Scanner</h1>
+      <p class="text-red-100 text-sm">Arahkan kamera ke QR Code ID Card</p>
+    </div>
+
+    <div class="p-4" id="scanner-container">
+      <div id="reader" class="rounded-2xl overflow-hidden border-4 border-slate-100"></div>
+    </div>
+
+    <div id="result-box" class="p-6 hidden">
+      <div class="flex flex-col items-center text-center">
+        <div class="relative">
+          <img id="res-foto" class="w-32 h-32 rounded-full object-cover border-4 border-green-500 mb-4" src="">
+          <div class="absolute bottom-4 right-0 bg-green-500 text-white rounded-full p-1 border-2 border-white">
+            <i class="fas fa-check text-xs"></i>
+          </div>
+        </div>
+        
+        <h2 id="res-nama" class="text-xl font-bold text-slate-800"></h2>
+        <p id="res-instansi" class="text-slate-500 text-sm mb-2"></p>
+        
+        <div class="mt-2 px-6 py-2 bg-green-100 text-green-700 rounded-xl">
+          <div class="text-[10px] uppercase font-bold opacity-70">Status Verifikasi</div>
+          <div class="font-bold">BERHASIL DICATAT</div>
+          <div id="res-waktu" class="text-[10px] mt-1 font-mono"></div>
+        </div>
+        
+        <button onclick="resetScan()" class="mt-6 w-full bg-slate-800 text-white py-4 rounded-2xl font-bold shadow-lg">
+          <i class="fas fa-qrcode mr-2"></i> SCAN BERIKUTNYA
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- KONFIGURASI ---
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzN7LXinht8WVLaw2b2iNKCCMQP02rYSY6WefD_fAdNxD0XLF18mQVQ1Ez_rpSxWYFOEg/exec"; 
+    let scanner;
+
+    function startScan() {
+      scanner = new Html5Qrcode("reader");
+      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+      scanner.start(
+        { facingMode: "environment" },
+        config,
+        onScanSuccess
+      ).catch(err => {
+        Swal.fire('Error Kamera', 'Pastikan izin kamera aktif dan gunakan HTTPS', 'error');
+      });
+    }
+
+    async function onScanSuccess(decodedText) {
+      // Hentikan scanner sementara agar tidak scan berkali-kali
+      await scanner.pause(true);
+      
+      Swal.fire({ 
+        title: 'Memverifikasi...', 
+        allowOutsideClick: false, 
+        didOpen: () => Swal.showLoading() 
+      });
+
+      try {
+        // Panggil GAS API menggunakan fetch
+        const response = await fetch(`${WEB_APP_URL}?action=checkDatabase&nik=${decodedText}`);
+        const res = await response.json();
+
+        Swal.close();
+
+        if (res && res.nama) {
+          // Tampilkan Hasil
+          document.getElementById('scanner-container').classList.add('hidden');
+          document.getElementById('result-box').classList.remove('hidden');
+          
+          document.getElementById('res-nama').innerText = res.nama;
+          document.getElementById('res-instansi').innerText = res.instansi;
+          document.getElementById('res-waktu').innerText = res.waktu;
+
+          // Handle foto drive
+          let fotoUrl = res.foto;
+          if (fotoUrl && fotoUrl.includes("drive.google.com")) {
+            const id = fotoUrl.match(/[-\w]{25,}/);
+            fotoUrl = id ? "https://drive.google.com/uc?export=view&id=" + id[0] : fotoUrl;
+          }
+          document.getElementById('res-foto').src = fotoUrl || "https://via.placeholder.com/150";
+          
+          // Suara Notifikasi (Opsional)
+          playBeep();
+
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Tidak Terdaftar',
+            text: 'NIK ' + decodedText + ' tidak ditemukan.',
+          }).then(resetScan);
+        }
+      } catch (err) {
+        Swal.fire('Error', 'Gagal terhubung ke server', 'error').then(resetScan);
+      }
+    }
+
+    function resetScan() {
+      document.getElementById('scanner-container').classList.remove('hidden');
+      document.getElementById('result-box').classList.add('hidden');
+      scanner.resume();
+    }
+
+    function playBeep() {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+      oscillator.connect(audioCtx.destination);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.1);
+    }
+
+    window.onload = startScan;
+  </script>
+</body>
+</html>
