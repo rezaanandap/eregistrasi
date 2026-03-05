@@ -119,18 +119,32 @@
 
     async function initApp() {
       startCamera();
-      
-      // Ambil Ref Data via API
+    
       try {
-        const data = await fetchData('getRefData');
+        // Memanggil API getRefData dari GAS
+        const response = await fetch(`${WEB_APP_URL}?action=getRefData`);
+        const data = await response.json();
+        
+        // Simpan ke variabel global masterData agar bisa digunakan filter dropdown
         masterData = data;
-        const unikSatker = [...new Set(data.map(i => i.satker || i.asalsatker))].filter(s => s).sort();
+    
+        // Ambil daftar unik Satker
+        const unikSatker = [...new Set(data.map(i => i.satker || i.asalsatker))]
+          .filter(s => s)
+          .sort();
+    
         const selSatker = document.getElementById('asalsatker');
         selSatker.innerHTML = '<option value="" disabled selected>Pilih Satker</option>' +
           unikSatker.map(s => `<option value="${s}">${s}</option>`).join('');
-      } catch (e) { console.error("Gagal load data", e); }
+          
+        console.log("Data referensi berhasil dimuat:", masterData.length, "baris.");
+      } catch (err) {
+        console.error("Gagal mengambil data referensi:", err);
+        Swal.fire('Gagal Memuat Data', 'Pastikan koneksi internet stabil dan URL Web App benar.', 'error');
+      }
     }
 
+    
     // --- LOGIKA KAMERA ---
     function startCamera() {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
@@ -247,4 +261,5 @@
     }
   </script>
 </body>
+
 </html>
